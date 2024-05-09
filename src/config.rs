@@ -2,22 +2,22 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
-use std::sync::Arc;
 use tokio::fs::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::OnceCell;
 use super::*;
 
 static PATH: &str = "cf-hub-cfg.json";
 
-pub type Config = Arc<ConfigData>;
+static CONFIG: OnceCell<Config> = OnceCell::const_new();
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ConfigData {
+pub struct Config {
     pub addr_server: SocketAddr,
     pub nodes: HashMap<String, SocketAddr>
 }
 
-impl Default for ConfigData {
+impl Default for Config {
     fn default() -> Self {
         Self {
             addr_server: SocketAddr::new(
@@ -39,8 +39,12 @@ impl Default for ConfigData {
     }
 }
 
-impl ConfigData {
-    pub(crate) async fn load() -> std::io::Result<Config> {
+impl Config {
+    pub async fn get() -> std::io::Result<&'static Config> {
+        CONFIG.get_or_try_init(Self::load).await
+    }
+
+    async fn load() -> std::io::Result<Config> {
         let config_path = Path::new(PATH);
 
         let config = if !config_path.is_file() {
@@ -85,6 +89,6 @@ impl ConfigData {
             }
         };
 
-        Ok(Arc::new(config))
+        Ok(config)
     }
 }

@@ -13,7 +13,6 @@ mod config;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use hyper::{Request, Response, StatusCode};
 use hyper::body::Bytes;
 use hyper::service::service_fn;
@@ -27,7 +26,7 @@ use hyper_util::rt::TokioExecutor;
 use http_body_util::{BodyExt, Full};
 use hyper::client::conn::http1::handshake;
 use hyper::header::{HeaderValue, HOST};
-use crate::config::{Config, ConfigData};
+use crate::config::Config;
 
 pub type Req = Request<hyper::body::Incoming>;
 pub type Res = Response<Full<Bytes>>;
@@ -35,7 +34,7 @@ pub type Res = Response<Full<Bytes>>;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     logs::init();
-    let cfg = ConfigData::load().await?;
+    let cfg = Config::get().await?;
 
     let listener = TcpListener::bind(&cfg.addr_server).await?;
     info!("Running the CF-HUB [{}] on: {}", VERSION, cfg.addr_server);
@@ -43,13 +42,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let acceptor_cf = cloudflare::TlsAcceptorCF::init()
         .expect("Failed to initialize the Cloudflare TLS!");
 
+    let service_handler = service_fn(move |req| {
+        async move {
+            let result = service(req).await;
+
+            if let Err(_) = &result {
+                let res = Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(body!(empty))
+                    .unwrap();
+
+                return Ok(res);
+            }
+
+            result.map_err(|_| unsafe {
+                std::mem::zeroed::<Infallible>()
+            })
+        }
+    });
+
     loop {
         let (stream, addr) = listener.accept().await?;
         debug!("[{}] new connection", addr);
 
         let acceptor = acceptor_cf.clone();
 
-        let cfg = cfg.clone();
         tokio::spawn(async move {
             let tls_stream = match acceptor.accept(stream).await {
                 Ok(tls_stream) => tls_stream,
@@ -64,29 +81,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             };
 
-            let abc = Arc::clone(&cfg);
-            let service = service_fn(move |req| {
-                let def = Arc::clone(&abc);
-                async move {
-                    let result = service(req, def).await;
-
-                    if let Err(_) = &result {
-                        let res = Response::builder()
-                            .status(StatusCode::BAD_GATEWAY)
-                            .body(body!(empty))
-                            .unwrap();
-
-                        return Ok(res);
-                    }
-
-                    result.map_err(|_| unsafe {
-                        std::mem::zeroed::<Infallible>()
-                    })
-                }
-            });
-
             if let Err(err) = Builder::new(TokioExecutor::new())
-                .serve_connection(TokioIo::new(tls_stream), service)
+                .serve_connection(TokioIo::new(tls_stream), service_handler)
                 .await
             {
                 error!("[{}] Error serving connection: {:#?}", addr, err);
@@ -95,13 +91,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 }
 
-pub async fn service(mut req: Req, cfg: Config) -> Result<Res, AnyError> {
+pub async fn service(mut req: Req) -> Result<Res, AnyError> {
     let headers = req.headers_mut();
 
     let node = headers
         .get("node")
         .ok_or(AnyError)?
         .to_str()?;
+
+    let cfg = Config::get().await?;
 
     let node_addr = cfg
         .nodes
