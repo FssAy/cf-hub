@@ -3,3 +3,10 @@
 
 # IDE settings
 /.idea
+
+# Secret files
+/secrets/*
+!/secrets/README.md
+
+# Config
+/cf-hub-cfg.json
