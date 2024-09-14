@@ -92,21 +92,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 pub async fn service(mut req: Req) -> Result<Res, AnyError> {
-    let headers = req.headers_mut();
-
-    let node = headers
-        .get("node")
-        .ok_or(AnyError)?
-        .to_str()?;
+    let host = req
+        .uri()
+        .host()
+        .ok_or(AnyError)?;
 
     let cfg = Config::get().await?;
 
-    let node_addr = cfg
-        .nodes
-        .get(node)
+    let host_addr = cfg
+        .hosts
+        .get(host)
         .ok_or(AnyError)?;
 
-    let node_stream = TcpStream::connect(node_addr).await?;
+    let node_stream = TcpStream::connect(host_addr).await?;
     let io = TokioIo::new(node_stream);
     let (mut sender, conn) = handshake(io).await?;
 

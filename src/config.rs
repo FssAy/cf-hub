@@ -14,7 +14,7 @@ static CONFIG: OnceCell<Config> = OnceCell::const_new();
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     pub addr_server: SocketAddr,
-    pub nodes: HashMap<String, SocketAddr>
+    pub hosts: HashMap<String, SocketAddr>
 }
 
 impl Default for Config {
@@ -24,7 +24,7 @@ impl Default for Config {
                 IpAddr::V4(Ipv4Addr::LOCALHOST),
                 80,
             ),
-            nodes: {
+            hosts: {
                 let mut map = HashMap::new();
                 map.insert(
                     "<YOUR_HOST>".to_string(),
