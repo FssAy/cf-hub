@@ -13,6 +13,7 @@ static CONFIG: OnceCell<Config> = OnceCell::const_new();
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
+    pub logs: bool,
     pub addr_server: SocketAddr,
     pub hosts: HashMap<String, SocketAddr>
 }
@@ -20,6 +21,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            logs: true,
             addr_server: SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::LOCALHOST),
                 80,

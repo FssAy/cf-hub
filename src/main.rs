@@ -91,29 +91,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 }
 
-pub async fn service(mut req: Req) -> Result<Res, AnyError> {
+pub async fn service(req: Req) -> Result<Res, AnyError> {
     let host = req
         .uri()
         .host()
-        .ok_or(AnyError)?;
+        .ok_or_else(|| {
+            error!("Missing host in the URL [{}]", req.uri());
+            AnyError
+        })?;
 
-    let cfg = Config::get().await?;
+    let cfg = Config::get().await.map_err(|err| {
+        error!("Failed to load config: {}", err);
+        err
+    })?;
 
     let host_addr = cfg
         .hosts
         .get(host)
-        .ok_or(AnyError)?;
+        .ok_or(AnyError)
+        .map_err(|err| {
+            if (cfg.logs) {
+                error!("HOST [{}] not found in the config!", host);
+            }
+            AnyError::from(err)
+        })?;
 
-    let node_stream = TcpStream::connect(host_addr).await?;
+    if (cfg.logs) {
+        info!("Got new request for [{}] redirected to [{}]", host, host_addr);
+    }
+
+    let node_stream = TcpStream::connect(host_addr).await.map_err(|err| {
+        if (cfg.logs) {
+            error!("Failed to connect to the [{}]: {}", host_addr, err);
+        }
+        err
+    })?;
+
     let io = TokioIo::new(node_stream);
-    let (mut sender, conn) = handshake(io).await?;
+    let (mut sender, conn) = handshake(io)
+        .await
+        .map_err(|err| {
+            if (cfg.logs) {
+                error!("Failed the handshake for [{}]: {}", host_addr, err);
+            }
+            err
+        })?;
 
     let proxy = async move {
-        let (res_head, mut res_body_stream) = sender.send_request(req).await?.into_parts();
+        let (res_head, mut res_body_stream) = sender
+            .send_request(req)
+            .await
+            .map_err(|err| {
+                if (cfg.logs) {
+                    error!("Failed to send the request: {}", err);
+                } 
+                err
+            })?
+            .into_parts();
 
         let mut res_body_buffer = Vec::new();
         while let Some(next) = res_body_stream.frame().await {
-            if let Ok(chunk) = next?.into_data() {
+            if let Ok(chunk) = next.map_err(|err| {
+                if (cfg.logs) {
+                    error!("Failed while reading the body: {}", err);
+                }
+                err
+            })?.into_data() {
                 res_body_buffer.extend(chunk);
             }
         }
