@@ -1,5 +1,8 @@
 # Build files
 /target
+.dockerignore
+Dockerfile
+build.sh
 
 # IDE settings
 /.idea
