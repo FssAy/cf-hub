@@ -35,6 +35,7 @@ pub type Res = Response<Full<Bytes>>;
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     logs::init();
     let cfg = Config::get().await?;
+    let logs = cfg.logs;
 
     let listener = TcpListener::bind(&cfg.addr_server).await?;
     info!("Running the CF-HUB [{}] on: {}", VERSION, cfg.addr_server);
@@ -62,7 +63,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
 
     loop {
-        let (stream, addr) = listener.accept().await?;
+        let (stream, addr) = listener.accept().await.map_err(|err| {
+            if logs {
+                error!("Failed to accept a connection: {}", err);
+            }
+            err
+        })?;
         debug!("[{}] new connection", addr);
 
         let acceptor = acceptor_cf.clone();
@@ -71,12 +77,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let tls_stream = match acceptor.accept(stream).await {
                 Ok(tls_stream) => tls_stream,
                 Err(err) => {
-                    #[cfg(debug_assertions)]
-                    error!("[{}] Failed to perform a TLS handshake: {:#?}", addr, err);
-
-                    // to disable warning on release build
-                    drop(err);
-
+                    if logs {
+                        error!("[{}] Failed to perform a TLS handshake: {:#?}", addr, err);
+                    }
                     return;
                 }
             };
@@ -162,11 +165,28 @@ pub async fn service(req: Req) -> Result<Res, AnyError> {
         }
 
         let res = Res::from_parts(res_head, body!(res_body_buffer));
+        
+        if (cfg.logs) {
+            info!("[{}] - {:?}\n{:#?}", res.status(), res.version(), res.headers());
+        }
+        
         Ok(res)
     };
 
     tokio::select! {
         result = proxy => result,
-        _ = conn => Err(AnyError),
+        res = conn => {
+            if cfg.logs {
+                match res {
+                    Ok(()) => {
+                        warn!("[{}] Connection closed!", host_addr);
+                    },
+                    Err(err) => {
+                        error!("[{}] Connection closed: {}", host_addr, err);
+                    }
+                }
+            }
+            Err(AnyError)
+        },
     }
 }
