@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "cf-hub"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "ansi_term",
  "http-body-util",
